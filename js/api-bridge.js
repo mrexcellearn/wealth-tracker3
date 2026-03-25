@@ -58,6 +58,27 @@
             });
 
             const result = await resp.json();
+            
+            // Auto-update session if backend refreshed the token
+            if (result && result.newIdToken) {
+                console.log('[API Bridge] Token refreshed by server. Updating local session.');
+                session.idToken = result.newIdToken;
+                if (result.newRefreshToken) session.refreshToken = result.newRefreshToken;
+                
+                // Update storage based on where it was originall stored
+                if (localStorage.getItem('excellearn_session')) {
+                    localStorage.setItem('excellearn_session', JSON.stringify(session));
+                } else if (sessionStorage.getItem('excellearn_session')) {
+                    sessionStorage.setItem('excellearn_session', JSON.stringify(session));
+                }
+                
+                // Update global memory if it exists
+                if (window.appSession) {
+                    window.appSession.idToken = session.idToken;
+                    if (session.refreshToken) window.appSession.refreshToken = session.refreshToken;
+                }
+            }
+            
             if (onSuccess) onSuccess(result);
           } catch (err) {
             console.error(`[API Bridge] ${prop} failed:`, err);
