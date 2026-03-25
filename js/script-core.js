@@ -46,9 +46,9 @@
         // Update global session variable dari storage terbaru
         const raw = localStorage.getItem('excellearn_session') || sessionStorage.getItem('excellearn_session');
         if (raw) {
-            try { 
-                window.appSession = JSON.parse(raw); 
-                
+            try {
+                window.appSession = JSON.parse(raw);
+
                 // Munculkan menu Admin jika role valid
                 if (window.appSession && window.appSession.role === 'admin') {
                     document.querySelectorAll('.nav-admin-item').forEach(el => el.classList.remove('hidden'));
@@ -74,6 +74,11 @@
      * exitApp() — Logout dan transisi ke tampilan Auth.
      */
     function exitApp() {
+        // [ZETTBOT] Tutup semua modal sebelum logout agar bersih (mencegah session leaking)
+        if (typeof closeAllActiveModals === 'function') {
+            closeAllActiveModals();
+        }
+
         localStorage.removeItem('excellearn_session');
         sessionStorage.removeItem('excellearn_session');
         window.appSession = {};
@@ -141,71 +146,57 @@
             }
         }
 
-        // --- Mode Live: Ambil data dari backend secara paralel ---
-        console.log('[AppData] Mode Live — mengambil data dari Sheet ID:', spreadsheetId);
-        let masterLoaded = false;
-        let trxLoaded = false;
-        let masterResult = null;
-        let trxResult = null;
-
-        function tryFinalize() {
-            if (!masterLoaded || !trxLoaded) return;
-
-            let db = {};
-
-            if (masterResult && masterResult.success && masterResult.data) {
-                const md = masterResult.data;
-                db.Accounts = md.Accounts || [];
-                db.Categories = md.Categories || [];
-                db.Budgets = md.Budgets || [];
-                db.Recurring = md.Recurring || [];
-                db.Goals = md.Goals || [];
-                db.Assets = md.Assets || [];
-                db.Debts = md.Debts || [];
-                db.AuditLogs = md.AuditLogs || [];
-                db.Settings = md.Settings || []; // Tambahkan ini agar Settings terbaca
-            } else {
-                console.warn('[AppData] MasterData gagal, fallback ke mock.');
-                const mockDb = initMockData();
-                db = { ...mockDb };
-            }
-
-            if (trxResult && trxResult.success && trxResult.data) {
-                db.Transactions = trxResult.data;
-            } else {
-                console.warn('[AppData] Transactions gagal, fallback ke mock.');
-                if (!db.Transactions) db.Transactions = [];
-            }
-
-            db = syncAccountGoalAllocations(db);
-            db = syncAssetAccountBalances(db);
-
-            window.appData = db;
-            window.isLiveMode = true;
-            saveAppData(db);
-            loadDashboardData();
-            console.log('[AppData] Data berhasil dimuat dari backend.');
-        }
+        // --- Mode Live: Ambil data dari backend dalam satu kali tarikan (Optimasi ZettBOT) ---
+        console.log('[AppData] Mode Live — mengambil data lengkap dari Sheet ID:', spreadsheetId);
 
         google.script.run
             .withSuccessHandler(function (res) {
-                masterResult = res; masterLoaded = true; tryFinalize();
-            })
-            .withFailureHandler(function (err) {
-                console.error('[AppData] fetchMasterData error:', err);
-                masterResult = { success: false }; masterLoaded = true; tryFinalize();
-            })
-            .fetchMasterData(spreadsheetId);
+                if (res && res.success && res.data) {
+                    const data = res.data;
+                    const md = data.master || {};
+                    let db = {};
 
-        google.script.run
-            .withSuccessHandler(function (res) {
-                trxResult = res; trxLoaded = true; tryFinalize();
+                    db.Accounts = md.Accounts || [];
+                    db.Categories = md.Categories || [];
+                    db.Budgets = md.Budgets || [];
+                    db.Recurring = md.Recurring || [];
+                    db.Goals = md.Goals || [];
+                    db.Assets = md.Assets || [];
+                    db.Debts = md.Debts || [];
+                    db.AuditLogs = md.AuditLogs || [];
+                    db.Settings = md.Settings || [];
+                    db.Transactions = data.transactions || [];
+
+                    db = syncAccountGoalAllocations(db);
+                    db = syncAssetAccountBalances(db);
+
+                    window.appData = db;
+                    window.isLiveMode = true;
+                    saveAppData(db);
+                    loadDashboardData();
+
+                    // [ZETTBOT] Refresh semua tampilan agar data langsung terlihat di layar apa pun
+                    if (typeof refreshAllActiveViews === 'function') {
+                        refreshAllActiveViews();
+                    }
+
+                    // [ZETTBOT] Sembunyikan indikator Pull to Refresh jika aktif
+                    if (typeof hidePullRefreshIndicator === 'function') {
+                        hidePullRefreshIndicator();
+                    }
+
+                    console.log(`[AppData] Data berhasil dimuat (${data.serverTimestamp}).`);
+                } else {
+                    console.warn('[AppData] fetchFullAppData gagal:', res ? res.message : 'Unknown error');
+                    // Fallback jika gagal (bisa tetap pakai cache atau mock)
+                    if (typeof hidePullRefreshIndicator === 'function') hidePullRefreshIndicator();
+                }
             })
             .withFailureHandler(function (err) {
-                console.error('[AppData] fetchTransactions error:', err);
-                trxResult = { success: false }; trxLoaded = true; tryFinalize();
+                console.error('[AppData] fetchFullAppData error:', err);
+                if (typeof hidePullRefreshIndicator === 'function') hidePullRefreshIndicator();
             })
-            .fetchTransactions(spreadsheetId);
+            .fetchFullAppData(spreadsheetId);
     }
 
     // ==========================================
@@ -302,7 +293,7 @@
 
     function saveTransactionsBatch(payloads) {
         if (!payloads || payloads.length === 0) return;
-        
+
         const spreadsheetId = window.appSession.spreadsheetId;
         const snapshot = JSON.stringify(window.appData);
 
@@ -822,7 +813,7 @@
             'modal-transaction', 'modal-account', 'modal-category',
             'modal-budget', 'modal-goal', 'modal-asset', 'modal-debt',
             'modal-quick-action', 'modal-account-detail', 'mobile-menu-sheet',
-            'modal-ai'
+            'modal-ai', 'modal-profile'
         ];
 
         let modalClosed = false;
@@ -953,7 +944,7 @@
     function toggleTheme() {
         const html = document.documentElement;
         const textEl = document.getElementById('theme-toggle-text');
-        
+
         if (html.classList.contains('dark')) {
             html.classList.remove('dark');
             localStorage.theme = 'light';
@@ -963,13 +954,14 @@
             localStorage.theme = 'dark';
             if (textEl) textEl.innerText = 'Light Mode';
         }
-        
+
         if (topSpendChartInstance) {
             loadDashboardData();
         }
     }
 
     function showTab(tabId) {
+        window.currentTab = tabId;
         if (typeof closeAccountDetail === 'function') closeAccountDetail();
 
         // Sidebar Highlight
@@ -1388,7 +1380,7 @@
         document.getElementById('profile-view-info').classList.add('hidden');
         document.getElementById('profile-view-password').classList.remove('hidden');
         document.getElementById('profile-modal-title').innerText = 'Update Security';
-        
+
         // Clear inputs
         document.getElementById('modal-pass-old').value = '';
         document.getElementById('modal-pass-new').value = '';
@@ -1400,9 +1392,9 @@
         try { session = JSON.parse(localStorage.getItem('excellearn_session') || sessionStorage.getItem('excellearn_session') || '{}'); } catch (e) { }
 
         let defaultName = session.email ? session.email.split('@')[0] : 'User';
-        return { 
-            FullName: session.fullName || defaultName, 
-            DefaultAIAccount: session.defaultAiAccount || '' 
+        return {
+            FullName: session.fullName || defaultName,
+            DefaultAIAccount: session.defaultAiAccount || ''
         };
     }
 
@@ -1413,7 +1405,7 @@
         // 1. Set Info
         const nameInput = document.getElementById('modal-prof-fullname');
         if (nameInput) nameInput.value = settings.FullName;
-        
+
         if (document.getElementById('modal-prof-display-name')) document.getElementById('modal-prof-display-name').innerText = settings.FullName || 'User';
         if (document.getElementById('modal-prof-display-email')) document.getElementById('modal-prof-display-email').innerText = session.email || 'email@example.com';
 
@@ -1458,10 +1450,10 @@
                 if (res.success) {
                     // Update Lokal Session
                     let sessionParams = {};
-                    try { sessionParams = JSON.parse(localStorage.getItem('excellearn_session') || window.sessionStorage.getItem('excellearn_session') || '{}'); } catch(e){}
+                    try { sessionParams = JSON.parse(localStorage.getItem('excellearn_session') || window.sessionStorage.getItem('excellearn_session') || '{}'); } catch (e) { }
                     sessionParams.fullName = res.data.fullName;
                     sessionParams.defaultAiAccount = res.data.defaultAiAccount;
-                    
+
                     localStorage.setItem('excellearn_session', JSON.stringify(sessionParams));
                     sessionStorage.setItem('excellearn_session', JSON.stringify(sessionParams));
                     window.appSession = sessionParams;
@@ -1518,7 +1510,7 @@
     function initProfileUI() {
         const theme = localStorage.theme || 'system';
         const textEl = document.getElementById('theme-toggle-text');
-        
+
         // Auto apply theme on reload
         const htmlObj = document.documentElement;
         if (theme === 'dark' || (theme === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
@@ -1531,4 +1523,152 @@
     }
 
     // Eksekusi segera setelah dokumen dimuat
-    document.addEventListener('DOMContentLoaded', initProfileUI);
+    document.addEventListener('DOMContentLoaded', () => {
+        initProfileUI();
+        initPullToRefresh();
+    });
+
+    // ==========================================
+    // [ZETTBOT] PWA PULL TO REFRESH LOGIC
+    // ==========================================
+
+    let pullStartY = 0;
+    let isPulling = false;
+    const PULL_THRESHOLD = 70; // Jarak tarik untuk memicu refresh
+
+    function initPullToRefresh() {
+        const main = document.getElementById('main-content');
+        const pullIndicator = document.getElementById('pull-refresh');
+        const pullIcon = document.getElementById('pull-icon');
+        const pullText = document.getElementById('pull-text');
+
+        if (!main || !pullIndicator) return;
+
+        main.addEventListener('touchstart', (e) => {
+            // Hanya aktif jika sedang di posisi paling atas
+            if (main.scrollTop <= 0) {
+                pullStartY = e.touches[0].pageY;
+            }
+        }, { passive: true });
+
+        main.addEventListener('touchmove', (e) => {
+            const currentY = e.touches[0].pageY;
+            const diff = currentY - pullStartY;
+
+            // Jika ditarik ke bawah saat di puncak scroll
+            if (main.scrollTop <= 0 && diff > 0) {
+                isPulling = true;
+
+                // Efek visual 'resistance' (tarikan terasa berat)
+                const translateY = Math.min(diff * 0.4, PULL_THRESHOLD + 20);
+                pullIndicator.style.transition = 'none'; // Matikan transisi saat ditarik manual
+                pullIndicator.style.transform = `translateY(${translateY}px)`;
+
+                // Putar icon panah jika melewati ambang batas
+                if (translateY >= PULL_THRESHOLD) {
+                    pullIcon.style.transform = 'rotate(180deg)';
+                    pullText.innerText = 'Lepaskan untuk Update';
+                } else {
+                    pullIcon.style.transform = 'rotate(0deg)';
+                    pullText.innerText = 'Tarik untuk Update';
+                }
+
+                // Mencegah scroll default browser jika sedang menarik pull-refresh
+                if (diff > 10 && e.cancelable) e.preventDefault();
+            }
+        }, { passive: false });
+
+        main.addEventListener('touchend', () => {
+            if (!isPulling) return;
+            isPulling = false;
+
+            // Ambil nilai translateY saat ini dari inline style
+            const style = pullIndicator.style.transform;
+            const match = style.match(/translateY\((.*)px\)/);
+            const currentY = match ? parseFloat(match[1]) : 0;
+
+            pullIndicator.style.transition = 'transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)';
+
+            if (currentY >= PULL_THRESHOLD) {
+                triggerRefresh();
+            } else {
+                pullIndicator.style.transform = 'translateY(-100%)';
+            }
+        });
+    }
+
+    function triggerRefresh() {
+        const pullIndicator = document.getElementById('pull-refresh');
+        const pullIcon = document.getElementById('pull-icon');
+        const spinner = document.getElementById('refresh-spinner');
+        const pullText = document.getElementById('pull-text');
+
+        if (!pullIndicator) return;
+
+        // Visual loading state
+        pullIndicator.style.transform = `translateY(${PULL_THRESHOLD}px)`;
+        if (pullIcon) pullIcon.classList.add('hidden');
+        if (spinner) spinner.classList.remove('hidden');
+        if (pullText) pullText.innerText = 'Memperbarui Data...';
+
+        // Trigger Sync Real-time dari backend (initAppData suda menghandle fetch dari sheet)
+        console.log('[ZettBOT] Memicu penyegaran data dari Google Sheets...');
+        initAppData();
+
+        // Timeout pengaman jika sinkronisasi gagal/terlalu lama (15 detik)
+        setTimeout(() => {
+            hidePullRefreshIndicator();
+        }, 15000);
+    }
+
+    function hidePullRefreshIndicator() {
+        const pullIndicator = document.getElementById('pull-refresh');
+        const pullIcon = document.getElementById('pull-icon');
+        const spinner = document.getElementById('refresh-spinner');
+        const pullText = document.getElementById('pull-text');
+
+        if (!pullIndicator || pullIndicator.style.transform === 'translateY(-100%)') return;
+
+        // Animasi keluar
+        pullIndicator.style.transform = 'translateY(-100%)';
+
+        // Reset state setelah animasi selesai
+        setTimeout(() => {
+            if (pullIcon) {
+                pullIcon.classList.remove('hidden');
+                pullIcon.style.transform = 'rotate(0deg)';
+            }
+            if (spinner) spinner.classList.add('hidden');
+            if (pullText) pullText.innerText = 'Tarik untuk Update';
+        }, 300);
+    }
+
+    // ==========================================
+    // GLOBAL UI REFRESH
+    // ==========================================
+    function refreshAllActiveViews() {
+        if (typeof loadDashboardData === 'function') loadDashboardData();
+        if (typeof renderTransactions === 'function') renderTransactions();
+        if (typeof renderBudgets === 'function') renderBudgets();
+        if (typeof renderAccounts === 'function') renderAccounts();
+        if (typeof renderGoals === 'function') renderGoals();
+        if (typeof renderAssets === 'function') renderAssets();
+        if (typeof renderDebts === 'function') renderDebts();
+        if (typeof renderCategories === 'function') renderCategories();
+        if (typeof renderSubscriptions === 'function') renderSubscriptions();
+        if (typeof renderProfile === 'function') renderProfile();
+        
+        // If an account detail is open, refresh it specifically
+        if (typeof currentDetailAccId !== 'undefined' && currentDetailAccId) {
+            if (typeof renderAccountHistory === 'function') renderAccountHistory();
+            if (typeof renderAccountAllocation === 'function') renderAccountAllocation();
+            
+            // Also update the header balances if elements exist
+            const db = getAppData();
+            const acc = db.Accounts.find(a => a.ID === currentDetailAccId);
+            if (acc) {
+                const headerBal = document.getElementById('det-header-balance');
+                if (headerBal) headerBal.innerText = formatRp(acc.Balance);
+            }
+        }
+    }
