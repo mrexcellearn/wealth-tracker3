@@ -1,4 +1,4 @@
-﻿    // Advanced Filters Added
+    // Advanced Filters Added
     // ==========================================
     // TRANSACTIONS MODULE
     // ==========================================
@@ -338,6 +338,7 @@
         setSelectValue('main-filter-type', 'All');
         setSelectValue('main-filter-quick', 'All');
         setSelectValue('main-filter-budget', 'All');
+        setSelectValue('main-filter-account', 'All');
         document.getElementById('main-filter-note').value = '';
 
         const startInput = document.getElementById('main-filter-start');
@@ -435,6 +436,7 @@
 
         const noteFilter = document.getElementById('main-filter-note').value.toLowerCase();
         const budgetFilter = document.getElementById('main-filter-budget').value;
+        const accountFilter = document.getElementById('main-filter-account') ? document.getElementById('main-filter-account').value : 'All';
         const selectedCats = Array.from(document.querySelectorAll('input[name="filter-cat-check"]:checked')).map(cb => cb.value);
 
         let trxs = db.Transactions;
@@ -443,8 +445,11 @@
         if (typeFilter !== 'All') trxs = trxs.filter(t => t.Type === typeFilter);
         if (startDate) trxs = trxs.filter(t => t.Date >= startDate);
         if (endDate) trxs = trxs.filter(t => t.Date <= endDate);
-        if (noteFilter) trxs = trxs.filter(t => (t.Note || "").toLowerCase().includes(noteFilter));
+        if (noteFilter) trxs = trxs.filter(t => (t.Note || "").toLowerCase().includes(noteFilter) || (t.Amount || "").toString().includes(noteFilter));
         if (selectedCats.length > 0) trxs = trxs.filter(t => selectedCats.includes(t.CategoryID));
+        if (accountFilter !== 'All') {
+            trxs = trxs.filter(t => t.FromAccountID === accountFilter || t.ToAccountID === accountFilter);
+        }
 
         // Update Mobile UI State
         updateFilterUIState();
@@ -628,10 +633,13 @@
         const db = getAppData();
         const typeFilterVal = document.getElementById('main-filter-type').value;
         const typeFilterText = document.getElementById('main-filter-type').options[document.getElementById('main-filter-type').selectedIndex].text;
-
         const quickFilterText = document.getElementById('main-filter-quick').options[document.getElementById('main-filter-quick').selectedIndex].text;
         const startDate = document.getElementById('main-filter-start').value;
         const endDate = document.getElementById('main-filter-end').value;
+        
+        const noteFilter = document.getElementById('main-filter-note').value.toLowerCase();
+        const accountFilter = document.getElementById('main-filter-account').value;
+        const selectedCats = Array.from(document.querySelectorAll('input[name="filter-cat-check"]:checked')).map(cb => cb.value);
 
         let periodeText = 'Semua Waktu';
         if (startDate && endDate) {
@@ -644,137 +652,139 @@
             periodeText = quickFilterText;
         }
 
+        let typeFilterTextFull = typeFilterText;
+        if (accountFilter !== 'All') {
+            const acc = db.Accounts.find(x => x.ID === accountFilter);
+            if (acc) typeFilterTextFull += ` (${acc.Name})`;
+        }
+
         let trxs = db.Transactions;
         if (typeFilterVal !== 'All') trxs = trxs.filter(t => t.Type === typeFilterVal);
         if (startDate) trxs = trxs.filter(t => t.Date >= startDate);
         if (endDate) trxs = trxs.filter(t => t.Date <= endDate);
+        if (noteFilter) trxs = trxs.filter(t => (t.Note || "").toLowerCase().includes(noteFilter) || (t.Amount || "").toString().includes(noteFilter));
+        if (selectedCats.length > 0) trxs = trxs.filter(t => selectedCats.includes(t.CategoryID));
+        if (accountFilter !== 'All') {
+            trxs = trxs.filter(t => t.FromAccountID === accountFilter || t.ToAccountID === accountFilter);
+        }
 
         if (trxs.length === 0) {
             Swal.fire({ icon: 'info', title: 'Kosong', text: 'Tidak ada data transaksi untuk dicetak pada filter ini.' });
             return;
-        }
-
-        trxs.sort((a, b) => new Date(b.Date) - new Date(a.Date));
+        }        trxs.sort((a, b) => new Date(b.Date) - new Date(a.Date));
 
         const getAccName = (id) => { if (!id) return '-'; const a = db.Accounts.find(x => x.ID === id); return a ? a.Name : id; };
         const getCatName = (id) => { if (!id) return '-'; const c = db.Categories.find(x => x.ID === id); return c ? c.Name : id; };
 
-        Swal.fire({ title: 'Menyiapkan PDF...', text: 'Mohon tunggu sebentar.', allowOutsideClick: false, didOpen: () => { Swal.showLoading() } });
+        // Initialize jsPDF
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF('p', 'mm', 'a4');
+        
+        // --- PDF HEADER ---
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(22);
+        doc.setTextColor(249, 115, 22); // brand-500
+        doc.text('Excellearn Laporan', 14, 22);
 
+        doc.setFontSize(14);
+        doc.setTextColor(15, 23, 42); // slate-900
+        doc.text('Histori Mutasi Keuangan', 14, 30);
+
+        // Header Info (Right)
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(100, 116, 139); // slate-500
+        const rightX = 196;
+        doc.text(`Dicetak: ${new Date().toLocaleString('id-ID')}`, rightX, 18, { align: 'right' });
+        doc.text(`Periode: ${periodeText}`, rightX, 23, { align: 'right' });
+        doc.text(`Tipe Filter: ${typeFilterTextFull}`, rightX, 28, { align: 'right' });
+
+        // --- SUMMARY BAR ---
         let totalIncome = 0;
         let totalExpense = 0;
-
-        let rowsHTML = '';
         trxs.forEach(t => {
-            const isExpense = t.Type === 'Expense';
-            const isIncome = t.Type === 'Income';
-            const isTransfer = t.Type === 'Transfer';
-
-            const color = isExpense ? '#ef4444' : (isIncome ? '#10b981' : '#64748b');
-            const sign = isExpense ? '-' : (isIncome ? '+' : '');
-
-            let typeLabel = 'Transfer';
-            let typeCol = '#475569';
-            if (isExpense) { typeLabel = 'Keluar'; typeCol = '#ef4444'; }
-            if (isIncome) { typeLabel = 'Masuk'; typeCol = '#10b981'; }
-
-            const displayDate = new Date(t.Date).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
-
-            if (isExpense) totalExpense += t.Amount;
-            if (isIncome) totalIncome += t.Amount;
-
-            let accInfo = '';
-            if (isExpense) accInfo = `<span style="color:#64748b;font-size:10px;">Dari:</span> ${getAccName(t.FromAccountID)}`;
-            else if (isIncome) accInfo = `<span style="color:#64748b;font-size:10px;">Ke:</span> ${getAccName(t.ToAccountID)}`;
-            else accInfo = `${getAccName(t.FromAccountID)} &rarr; ${getAccName(t.ToAccountID)}`;
-
-            let catNote = `<strong>${t.Note || typeLabel}</strong><br><span style="color:#64748b; font-size:10px;">${isTransfer ? 'Transfer Antar Akun' : getCatName(t.CategoryID)}</span>`;
-
-            rowsHTML += `
-          <tr style="border-bottom: 1px solid #e2e8f0;">
-            <td style="padding: 12px 8px; color: #475569; vertical-align: top;">${displayDate}</td>
-            <td style="padding: 12px 8px; vertical-align: top; color:${typeCol}; font-weight:bold;">${typeLabel}</td>
-            <td style="padding: 12px 8px; vertical-align: top;">${catNote}</td>
-            <td style="padding: 12px 8px; vertical-align: top;">${accInfo}</td>
-            <td style="padding: 12px 8px; text-align: right; color: ${color}; font-weight: bold; vertical-align: top;">${sign}${formatRp(t.Amount)}</td>
-          </tr>
-        `;
+            if (t.Type === 'Income') totalIncome += t.Amount;
+            if (t.Type === 'Expense') totalExpense += t.Amount;
         });
 
-        const currentDatetime = new Date().toLocaleString('id-ID');
-        const cetakDateOnly = new Date().toLocaleDateString('id-ID');
+        // Background for summary
+        doc.setFillColor(248, 250, 252); // slate-50
+        doc.roundedRect(14, 38, 182, 12, 2, 2, 'F');
+        
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(5, 150, 105); // emerald-600
+        doc.text(`TOTAL MASUK: +${formatRp(totalIncome)}`, 20, 45.5);
+        
+        doc.setTextColor(225, 29, 72); // rose-600
+        const expenseX = 190;
+        doc.text(`TOTAL KELUAR: -${formatRp(totalExpense)}`, expenseX, 45.5, { align: 'right' });
 
-        let html = `
-        <div style="padding: 30px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #1e293b; background-color:#ffffff;">
-          
-          <div style="border-bottom: 2px solid #f1f5f9; padding-bottom: 20px; margin-bottom: 20px; display:flex; justify-content:space-between; align-items:flex-start;">
-            <div>
-              <h1 style="margin: 0; color: #f97316; font-size: 28px; font-weight:900; letter-spacing:-0.5px;">Excellearn Laporan</h1>
-              <h2 style="margin: 4px 0 0 0; color: #0f172a; font-size: 18px; font-weight:700;">Histori Mutasi Keuangan</h2>
-            </div>
-            <div style="text-align:right; font-size:12px; color:#64748b; line-height:1.6;">
-              <div><strong>Tanggal Cetak:</strong> ${cetakDateOnly}</div>
-              <div><strong>Periode:</strong> ${periodeText}</div>
-              <div><strong>Tipe Filter:</strong> ${typeFilterText}</div>
-            </div>
-          </div>
+        // --- TABLE ---
+        const tableBody = trxs.map(t => {
+            const isTransfer = t.Type === 'Transfer';
+            const dateStr = new Date(t.Date).toLocaleDateString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric' });
+            
+            let typeLabel = 'Transfer';
+            if (t.Type === 'Income') typeLabel = 'Masuk';
+            if (t.Type === 'Expense') typeLabel = 'Keluar';
 
-          <div style="display: flex; gap: 15px; margin-bottom: 25px;">
-            <div style="flex: 1; background-color: #ecfdf5; border: 1px solid #d1fae5; padding: 15px; border-radius: 12px;">
-              <div style="font-size: 10px; font-weight: bold; color: #059669; text-transform: uppercase; margin-bottom: 5px;">Total Pemasukan</div>
-              <div style="font-size: 18px; font-weight: 900; color: #10b981;">+${formatRp(totalIncome)}</div>
-            </div>
-            <div style="flex: 1; background-color: #fef2f2; border: 1px solid #fee2e2; padding: 15px; border-radius: 12px;">
-              <div style="font-size: 10px; font-weight: bold; color: #e11d48; text-transform: uppercase; margin-bottom: 5px;">Total Pengeluaran</div>
-              <div style="font-size: 18px; font-weight: 900; color: #ef4444;">-${formatRp(totalExpense)}</div>
-            </div>
-            <div style="flex: 1; background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 15px; border-radius: 12px;">
-              <div style="font-size: 10px; font-weight: bold; color: #475569; text-transform: uppercase; margin-bottom: 5px;">Total Mutasi</div>
-              <div style="font-size: 18px; font-weight: 900; color: #0f172a;">${trxs.length} Transaksi</div>
-            </div>
-          </div>
+            let noteText = t.Note || (isTransfer ? 'Transfer Antar Akun' : getCatName(t.CategoryID));
+            let accInfo = isTransfer ? `${getAccName(t.FromAccountID)} -> ${getAccName(t.ToAccountID)}` : getAccName(t.FromAccountID || t.ToAccountID);
+            
+            const amountPrefix = t.Type === 'Expense' ? '-' : (t.Type === 'Income' ? '+' : '');
+            
+            return [
+                dateStr,
+                typeLabel,
+                noteText,
+                accInfo,
+                `${amountPrefix}${formatRp(t.Amount)}`
+            ];
+        });
 
-          <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 30px;">
-            <thead>
-              <tr style="background-color: #f8fafc; border-bottom: 2px solid #cbd5e1; text-align: left;">
-                <th style="padding: 12px 8px; color: #475569; text-transform:uppercase; font-size:10px;">Tanggal</th>
-                <th style="padding: 12px 8px; color: #475569; text-transform:uppercase; font-size:10px;">Tipe</th>
-                <th style="padding: 12px 8px; color: #475569; text-transform:uppercase; font-size:10px;">Kategori/Catatan</th>
-                <th style="padding: 12px 8px; color: #475569; text-transform:uppercase; font-size:10px;">Akun Terkait</th>
-                <th style="padding: 12px 8px; text-align: right; color: #475569; text-transform:uppercase; font-size:10px;">Nominal</th>
-              </tr>
-            </thead>
-            <tbody style="border-bottom: 2px solid #e2e8f0;">
-                ${rowsHTML}
-            </tbody>
-          </table>
+        doc.autoTable({
+            startY: 55,
+            head: [['Tanggal', 'Tipe', 'Catatan / Kategori', 'Akun', 'Nominal']],
+            body: tableBody,
+            theme: 'striped',
+            headStyles: { 
+                fillColor: [30, 41, 59], // slate-800
+                textColor: [255, 255, 255],
+                fontSize: 9,
+                fontStyle: 'bold',
+                halign: 'center'
+            },
+            columnStyles: {
+                0: { halign: 'center', cellWidth: 22 }, // Date
+                1: { halign: 'center', cellWidth: 18 }, // Type
+                2: { fontStyle: 'bold', cellWidth: 'auto' }, // Note
+                3: { fontSize: 8, cellWidth: 40 }, // Accounts
+                4: { halign: 'right', fontStyle: 'bold', cellWidth: 35 } // Amount
+            },
+            styles: {
+                fontSize: 8,
+                cellPadding: 3,
+                valign: 'middle'
+            },
+            didParseCell: function(data) {
+                if (data.section === 'body' && data.column.index === 4) {
+                    const rowData = trxs[data.row.index];
+                    if (rowData.Type === 'Income') data.cell.styles.textColor = [16, 185, 129]; // emerald-500
+                    if (rowData.Type === 'Expense') data.cell.styles.textColor = [239, 68, 68]; // rose-500
+                }
+            }
+        });
 
-          <div style="font-size: 10px; color: #94a3b8; text-align: center; border-top: 1px solid #f1f5f9; padding-top: 15px; margin-top: auto;">
-            Dokumen ini di-generate secara otomatis oleh Excellearn Wealth Tracker pada ${currentDatetime}.
-          </div>
-        </div>
-      `;
-
-        const element = document.createElement('div');
-        element.innerHTML = html;
-
-        const opt = {
-            margin: [0.5, 0.5, 0.5, 0.5],
-            filename: `Laporan_Excellearn_${Date.now()}.pdf`,
-            image: { type: 'jpeg', quality: 0.98 },
-            html2canvas: { scale: 2, useCORS: true },
-            jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' }
-        };
-
-        setTimeout(() => {
-            html2pdf().set(opt).from(element).save().then(() => {
-                Swal.close();
-                Swal.fire({ icon: 'success', title: 'Berhasil', text: 'PDF berhasil diunduh.', timer: 1500, showConfirmButton: false });
-            }).catch(err => {
-                console.error(err);
-                Swal.fire({ icon: 'error', title: 'Gagal', text: 'Terjadi kesalahan saat memproses PDF.' });
-            });
-        }, 300);
+        // Success notification
+        doc.save(`Excellearn_Report_${new Date().getTime()}.pdf`);
+        Swal.fire({ 
+            icon: 'success', 
+            title: 'Berhasil', 
+            text: 'PDF berhasil diunduh sebagai teks (Searchable).', 
+            timer: 2000, 
+            showConfirmButton: false 
+        });
     }
 
     function toggleTransactionCard(element) {
@@ -841,7 +851,7 @@
     function populateFilterOptions() {
         const db = getAppData();
 
-        // Populate Budgets — MUST use setSelectHTML to sync custom select wrapper
+        // Populate Budgets
         let budOptions = '<option value="All">Semua Budget</option>';
         if (db.Budgets) {
             db.Budgets.forEach(b => {
@@ -849,6 +859,15 @@
             });
         }
         setSelectHTML('main-filter-budget', budOptions);
+
+        // Populate Accounts (NEW)
+        let accOptions = '<option value="All">Semua Akun</option>';
+        if (db.Accounts) {
+            db.Accounts.sort((a, b) => a.Name.localeCompare(b.Name)).forEach(acc => {
+                accOptions += `<option value="${acc.ID}">${acc.Name}</option>`;
+            });
+        }
+        setSelectHTML('main-filter-account', accOptions);
 
         // Populate Categories Multiselect
         const catDropdown = document.getElementById('category-multiselect-dropdown');
@@ -918,6 +937,7 @@
         const quickEl = document.getElementById('main-filter-quick');
         const noteEl = document.getElementById('main-filter-note');
         const budgetEl = document.getElementById('main-filter-budget');
+        const accountEl = document.getElementById('main-filter-account');
 
         if (!typeEl || !quickEl) return;
 
@@ -925,7 +945,10 @@
         const quick = quickEl.value;
         const note = noteEl ? noteEl.value : '';
         const budget = budgetEl ? budgetEl.value : 'All';
+        const account = accountEl ? accountEl.value : 'All';
         const cats = document.querySelectorAll('input[name="filter-cat-check"]:checked').length;
+        const startDate = document.getElementById('main-filter-start').value;
+        const endDate = document.getElementById('main-filter-end').value;
 
         let count = 0;
         let summaryLines = [];
@@ -934,29 +957,45 @@
         if (quick !== 'All') { count++; summaryLines.push(quickEl.options[quickEl.selectedIndex].text); }
         if (note) count++;
         if (budget !== 'All') count++;
+        if (account !== 'All') { count++; summaryLines.push('Akun Spesifik'); }
         if (cats > 0) count++;
+        if (startDate || endDate) count++;
+
+        // Update Badge (Both Mobile and Desktop Toggle)
+        const badge = document.getElementById('mobile-filter-badge');
+        const desktopToggleBtn = document.getElementById('btn-toggle-filters');
+        
+        if (count > 0) {
+            if (badge) {
+                badge.innerText = count;
+                badge.classList.remove('hidden');
+            }
+            if (desktopToggleBtn) {
+                const label = desktopToggleBtn.querySelector('span');
+                if (label) label.innerText = `Semua Filter (${count})`;
+                desktopToggleBtn.classList.add('text-brand-500', 'bg-brand-50', 'dark:bg-brand-900/30');
+            }
+        } else {
+            if (badge) badge.classList.add('hidden');
+            if (desktopToggleBtn) {
+                const label = desktopToggleBtn.querySelector('span');
+                if (label) label.innerText = `Semua Filter`;
+                desktopToggleBtn.classList.remove('text-brand-500', 'bg-brand-50', 'dark:bg-brand-900/30');
+            }
+        }
 
         if (isMobile) {
-            const badge = document.getElementById('mobile-filter-badge');
             const summaryEl = document.getElementById('trx-filter-summary');
             const extra = document.getElementById('trx-filter-extra');
-
-            if (count > 0) {
-                if (badge) {
-                    badge.innerText = count;
-                    badge.classList.remove('hidden');
+            if (count > 0 && summaryEl) {
+                summaryEl.innerText = summaryLines.join(' • ');
+                if (extra && !extra.classList.contains('expanded')) {
+                    summaryEl.classList.remove('hidden');
+                } else {
+                    summaryEl.classList.add('hidden');
                 }
-                if (summaryEl) {
-                    summaryEl.innerText = summaryLines.join(' • ');
-                    if (extra && !extra.classList.contains('expanded')) {
-                        summaryEl.classList.remove('hidden');
-                    } else {
-                        summaryEl.classList.add('hidden');
-                    }
-                }
-            } else {
-                if (badge) badge.classList.add('hidden');
-                if (summaryEl) summaryEl.classList.add('hidden');
+            } else if (summaryEl) {
+                summaryEl.classList.add('hidden');
             }
         }
     }
