@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="id">
 
 <head>
@@ -73,7 +73,9 @@
     <!-- Phosphor Icons -->
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
 
-    <!-- html2pdf.js for PDF Generation -->
+    <!-- PDF Generation Libraries (jsPDF + autoTable for searchable text) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
     <script>
@@ -829,7 +831,16 @@
         </nav>
 
         <!-- Main Content -->
-        <main class="flex-1 p-4 md:p-6 pb-40 md:pb-6 overflow-y-auto w-full relative">
+        <main id="main-content" class="flex-1 p-4 md:p-6 pb-40 md:pb-6 overflow-y-auto w-full relative">
+            
+            <!-- [ZETTBOT] Pull to Refresh Indicator -->
+            <div id="pull-refresh" class="absolute top-0 left-0 w-full flex flex-col items-center justify-center -translate-y-full transition-transform duration-300 pointer-events-none z-40 py-4">
+                <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-full w-10 h-10 flex items-center justify-center shadow-lg">
+                    <i id="pull-icon" class="ph-bold ph-arrow-down text-brand-500 transition-transform"></i>
+                    <i id="refresh-spinner" class="ph-bold ph-spinner animate-spin text-brand-500 hidden"></i>
+                </div>
+                <span id="pull-text" class="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-widest">Tarik untuk Update</span>
+            </div>
 
             <!-- Mobile Header -->
             <div class="flex md:hidden items-center justify-between mb-6">
@@ -1072,51 +1083,74 @@
 
                     <!-- Filter Content -->
                     <div id="trx-filter-content">
-                        <!-- Row 1: Note, Category, Quick Range -->
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-2 md:gap-4 pt-1 md:pt-0">
+                        <!-- Row 1: Only Search Note by default -->
+                        <div class="pt-1 md:pt-0">
                             <div>
-                                <label class="block text-xs font-medium text-slate-500 mb-1">Cari Catatan</label>
+                                <label class="block text-xs font-medium text-slate-500 mb-1 flex items-center gap-1">
+                                    <i class="ph-bold ph-magnifying-glass"></i> Cari Catatan
+                                </label>
                                 <div class="relative">
                                     <i
                                         class="ph-bold ph-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
                                     <input type="text" id="main-filter-note" oninput="renderTransactions()"
-                                        placeholder="Ketik sesuatu..."
-                                        class="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 outline-none text-sm focus:ring-2 focus:ring-brand-500/20 transition-all">
+                                        placeholder="Ketik catatan atau nominal..."
+                                        class="w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 outline-none text-sm focus:ring-2 focus:ring-brand-500/20 transition-all shadow-sm">
                                 </div>
-                            </div>
-                            <div class="multiselect-container hidden md:block mobile-filter-extra"
-                                id="category-filter-container">
-                                <label class="block text-xs font-medium text-slate-500 mb-1">Pilih Kategori</label>
-                                <div onclick="toggleCategoryDropdown()" id="category-multiselect-trigger"
-                                    class="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 outline-none text-sm flex justify-between items-center cursor-pointer hover:border-brand-300 transition-all">
-                                    <span id="category-multiselect-label" class="truncate text-slate-500">Semua
-                                        Kategori</span>
-                                    <i class="ph-bold ph-caret-down text-[10px] text-slate-400"></i>
-                                </div>
-                                <div id="category-multiselect-dropdown" class="multiselect-dropdown">
-                                    <!-- Will be populated by JS -->
-                                </div>
-                            </div>
-                            <div class="hidden md:block mobile-filter-extra">
-                                <label class="block text-xs font-medium text-slate-500 mb-1">Rentang Cepat</label>
-                                <select id="main-filter-quick" onchange="applyQuickDate()"
-                                    class="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 outline-none text-sm focus:ring-2 focus:ring-brand-500/20 transition-all font-medium">
-                                    <option value="All">Semua Waktu</option>
-                                    <option value="Today">Hari Ini</option>
-                                    <option value="Yesterday">Kemarin</option>
-                                    <option value="ThisWeek">Minggu Ini</option>
-                                    <option value="ThisMonth">Bulan Ini</option>
-                                    <option value="LastMonth">Bulan Lalu</option>
-                                </select>
                             </div>
                         </div>
 
-                        <!-- Row 2: Type, Budget, Date Range (Collapsible) -->
+                        <!-- Advanced Filters Drawer -->
                         <div id="trx-filter-extra" class="filter-expand-content">
                             <div id="trx-filter-extra-row"
-                                class="grid grid-cols-1 md:grid-cols-3 gap-4 border-t border-slate-50 dark:border-slate-800 pt-4 mt-4 md:mt-0">
+                                class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 border-t border-slate-100 dark:border-slate-800 pt-4 mt-4">
+                                
+                                <!-- Category -->
+                                <div class="multiselect-container" id="category-filter-container">
+                                    <label class="block text-xs font-medium text-slate-500 mb-1 flex items-center gap-1">
+                                        <i class="ph-bold ph-tag"></i> Pilih Kategori
+                                    </label>
+                                    <div onclick="toggleCategoryDropdown()" id="category-multiselect-trigger"
+                                        class="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 outline-none text-sm flex justify-between items-center cursor-pointer hover:border-brand-300 transition-all">
+                                        <span id="category-multiselect-label" class="truncate text-slate-500">Semua Kategori</span>
+                                        <i class="ph-bold ph-caret-down text-[10px] text-slate-400"></i>
+                                    </div>
+                                    <div id="category-multiselect-dropdown" class="multiselect-dropdown">
+                                        <!-- Will be populated by JS -->
+                                    </div>
+                                </div>
+
+                                <!-- Account Filter (NEW) -->
                                 <div>
-                                    <label class="block text-xs font-medium text-slate-500 mb-1">Tipe Transaksi</label>
+                                    <label class="block text-xs font-medium text-slate-500 mb-1 flex items-center gap-1">
+                                        <i class="ph-bold ph-bank"></i> Berdasarkan Akun
+                                    </label>
+                                    <select id="main-filter-account" onchange="renderTransactions()"
+                                        class="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 outline-none text-sm focus:ring-2 focus:ring-brand-500/20 transition-all font-medium">
+                                        <option value="All">Semua Akun</option>
+                                    </select>
+                                </div>
+
+                                <!-- Quick Range -->
+                                <div>
+                                    <label class="block text-xs font-medium text-slate-500 mb-1 flex items-center gap-1">
+                                        <i class="ph-bold ph-calendar"></i> Rentang Cepat
+                                    </label>
+                                    <select id="main-filter-quick" onchange="applyQuickDate()"
+                                        class="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 outline-none text-sm focus:ring-2 focus:ring-brand-500/20 transition-all font-medium">
+                                        <option value="All">Semua Waktu</option>
+                                        <option value="Today">Hari Ini</option>
+                                        <option value="Yesterday">Kemarin</option>
+                                        <option value="ThisWeek">Minggu Ini</option>
+                                        <option value="ThisMonth">Bulan Ini</option>
+                                        <option value="LastMonth">Bulan Lalu</option>
+                                    </select>
+                                </div>
+
+                                <!-- Type -->
+                                <div>
+                                    <label class="block text-xs font-medium text-slate-500 mb-1 flex items-center gap-1">
+                                        <i class="ph-bold ph-arrows-left-right"></i> Tipe Transaksi
+                                    </label>
                                     <select id="main-filter-type" onchange="renderTransactions()"
                                         class="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 outline-none text-sm focus:ring-2 focus:ring-brand-500/20 transition-all font-medium">
                                         <option value="All">Semua Tipe</option>
@@ -1125,16 +1159,23 @@
                                         <option value="Transfer">Transfer</option>
                                     </select>
                                 </div>
+
+                                <!-- Budget -->
                                 <div>
-                                    <label class="block text-xs font-medium text-slate-500 mb-1">Berdasarkan
-                                        Budget</label>
+                                    <label class="block text-xs font-medium text-slate-500 mb-1 flex items-center gap-1">
+                                        <i class="ph-bold ph-wallet"></i> Berdasarkan Budget
+                                    </label>
                                     <select id="main-filter-budget" onchange="handleBudgetFilterChange()"
                                         class="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 outline-none text-sm focus:ring-2 focus:ring-brand-500/20 transition-all font-medium">
                                         <option value="All">Semua Budget</option>
                                     </select>
                                 </div>
+
+                                <!-- Custom Date Range -->
                                 <div>
-                                    <label class="block text-xs font-medium text-slate-500 mb-1">Rentang Tanggal</label>
+                                    <label class="block text-xs font-medium text-slate-500 mb-1 flex items-center gap-1">
+                                        <i class="ph-bold ph-calendar-blank"></i> Rentang Tanggal
+                                    </label>
                                     <div class="grid grid-cols-2 gap-2">
                                         <input type="date" id="main-filter-start" onchange="handleStartDateChange()"
                                             class="w-full px-2 py-2 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 outline-none text-[11px] focus:ring-2 focus:ring-brand-500/20 transition-all">
