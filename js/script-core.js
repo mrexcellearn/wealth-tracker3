@@ -237,6 +237,8 @@
         saveMasterData('AuditLogs', db.AuditLogs);
     }
 
+    let auditLogTimer = null;
+
     function saveMasterData(key, payload) {
         const spreadsheetId = window.appSession.spreadsheetId;
         const snapshot = JSON.stringify(window.appData);
@@ -258,21 +260,40 @@
         if (typeof renderSubscriptions === 'function') renderSubscriptions();
 
         if (spreadsheetId && spreadsheetId !== 'LOCAL_MOCK' && typeof google !== 'undefined' && google.script) {
-            console.log(`[Sync] Menitipkan update ${key} ke background...`);
-            google.script.run
-                .withSuccessHandler((res) => {
-                    if (res && res.success === false) {
-                        if (res.authError) {
-                            Swal.fire({ icon: 'error', title: 'Sesi Habis', text: 'Sesi login Anda telah kadaluarsa. Silakan login kembali.' }).then(() => {
-                                if (typeof logoutUser === 'function') logoutUser();
-                            });
-                        } else {
-                            rollbackAppData(snapshot, `Gagal sinkronisasi ${key}: ` + res.message);
-                        }
-                    } else console.log(`[Sync] ${key} berhasil disinkronisasi.`);
-                })
-                .withFailureHandler((err) => rollbackAppData(snapshot, `Gagal sinkronisasi ${key}: ` + err))
-                .mutateMasterData(spreadsheetId, key, payload);
+            if (key === 'AuditLogs') {
+                clearTimeout(auditLogTimer);
+                auditLogTimer = setTimeout(() => {
+                    console.log(`[Sync] Menitipkan update ${key} ke background (Debounced)...`);
+                    google.script.run
+                        .withSuccessHandler((res) => {
+                            if (res && res.success === false && res.authError) {
+                                Swal.fire({ icon: 'error', title: 'Sesi Habis', text: 'Sesi login Anda telah kadaluarsa. Silakan login kembali.' }).then(() => {
+                                    if (typeof logoutUser === 'function') logoutUser();
+                                });
+                            }
+                        })
+                        .withFailureHandler((err) => {
+                            console.warn(`[Sync] AuditLogs sync gagal (non-critical): ${err}`);
+                        })
+                        .mutateMasterData(spreadsheetId, key, payload);
+                }, 3000);
+            } else {
+                console.log(`[Sync] Menitipkan update ${key} ke background...`);
+                google.script.run
+                    .withSuccessHandler((res) => {
+                        if (res && res.success === false) {
+                            if (res.authError) {
+                                Swal.fire({ icon: 'error', title: 'Sesi Habis', text: 'Sesi login Anda telah kadaluarsa. Silakan login kembali.' }).then(() => {
+                                    if (typeof logoutUser === 'function') logoutUser();
+                                });
+                            } else {
+                                rollbackAppData(snapshot, `Gagal sinkronisasi ${key}: ` + res.message);
+                            }
+                        } else console.log(`[Sync] ${key} berhasil disinkronisasi.`);
+                    })
+                    .withFailureHandler((err) => rollbackAppData(snapshot, `Gagal sinkronisasi ${key}: ` + err))
+                    .mutateMasterData(spreadsheetId, key, payload);
+            }
         }
     }
 
