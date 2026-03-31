@@ -473,7 +473,14 @@
             <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
       `;
 
-        let sortedTrxs = [...trxs].sort((a, b) => new Date(b.Date) - new Date(a.Date));
+        let sortedTrxs = [...trxs].sort((a, b) => {
+            const dateDiff = new Date(b.Date) - new Date(a.Date);
+            if (dateDiff !== 0) return dateDiff;
+            // Sorting ID descending fallback (terbaru di atas jika tanggal sama)
+            return b.ID > a.ID ? -1 : (b.ID < a.ID ? 1 : 0);
+        });
+
+        let lastDateFormatted = '';
 
         sortedTrxs.forEach(t => {
             const isExpense = t.Type === 'Expense';
@@ -485,6 +492,12 @@
 
             // ZettBOT Visual FEEDBACK: Flash filling for AI trx
             const flashClass = recentAITrxIds.has(t.ID) ? 'flash-active' : '';
+
+            // Grouping Header for Mobile Cards
+            if (displayDate !== lastDateFormatted) {
+                cardsHTML += `<div class="px-2 mb-1.5 mt-4 first:mt-1 text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2"><i class="ph-bold ph-calendar-blank"></i> ${displayDate}</div>`;
+                lastDateFormatted = displayDate;
+            }
 
             tableHTML += `
           <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group ${flashClass}">
@@ -525,8 +538,6 @@
                 <div class="min-w-0 flex-1">
                   <div class="font-bold text-sm text-slate-800 dark:text-slate-200 truncate" title="${t.Note || t.Type}">${t.Note || t.Type}</div>
                   <div class="text-xs text-slate-500 flex items-center gap-1.5 mt-0.5">
-                    <span class="shrink-0">${displayDate}</span>
-                    <span class="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600 shrink-0"></span>
                     <span class="truncate" title="${t.Type === 'Transfer' ? 'Transfer' : getCatName(t.CategoryID)}">${t.Type === 'Transfer' ? 'Transfer' : getCatName(t.CategoryID)}</span>
                   </div>
                 </div>
