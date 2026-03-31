@@ -1,4 +1,4 @@
-const CACHE_NAME = 'excellearn-v6';
+const CACHE_NAME = 'excellearn-v7';
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -39,7 +39,12 @@ self.addEventListener('fetch', (event) => {
 
   // API calls → always network (never cache)
   if (url.hostname.includes('script.google.com') || url.hostname.includes('googleapis.com')) {
-    event.respondWith(fetch(event.request));
+    event.respondWith(
+      fetch(event.request).catch(() => new Response(
+        JSON.stringify({ success: false, message: 'Network error: permintaan gagal dikirim.' }),
+        { headers: { 'Content-Type': 'application/json' } }
+      ))
+    );
     return;
   }
 
