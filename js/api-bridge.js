@@ -11,6 +11,21 @@
 (function() {
   const API_URL = window.APP_CONFIG?.GAS_API_URL || '';
 
+  async function fetchWithRetry(url, options, maxRetries = 2) {
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          try {
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
+              const resp = await fetch(url, { ...options, signal: controller.signal });
+              clearTimeout(timeoutId);
+              return resp;
+          } catch (err) {
+              if (attempt === maxRetries) throw err;
+              await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+          }
+      }
+  }
+
   function createRunnerInstance() {
     let _onSuccess = null;
     let _onFailure = null;
@@ -45,7 +60,7 @@
               sessionStorage.getItem('excellearn_session') || '{}'
             );
 
-            const resp = await fetch(API_URL, {
+            const resp = await fetchWithRetry(API_URL, {
               method: 'POST',
               headers: { 'Content-Type': 'text/plain' },  // Avoid CORS preflight
               body: JSON.stringify({
@@ -55,7 +70,7 @@
                 refreshToken: session.refreshToken || ''
               }),
               redirect: 'follow'  // Handle GAS 302 redirect
-            });
+            }, 2);
 
             const result = await resp.json();
             
