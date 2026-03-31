@@ -477,7 +477,7 @@
             const dateDiff = new Date(b.Date) - new Date(a.Date);
             if (dateDiff !== 0) return dateDiff;
             // Sorting ID descending fallback (terbaru di atas jika tanggal sama)
-            return b.ID > a.ID ? -1 : (b.ID < a.ID ? 1 : 0);
+            return (b.ID || '').toString().localeCompare((a.ID || '').toString());
         });
 
         let lastDateFormatted = '';
