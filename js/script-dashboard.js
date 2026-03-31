@@ -1,4 +1,4 @@
-﻿    // ==========================================
+    // ==========================================
     // DASHBOARD MODULE
     // ==========================================
     function loadDashboardData() {
@@ -51,7 +51,11 @@
         }
 
         // --- Recent Transactions ---
-        const recentTrxData = [...db.Transactions].sort((a, b) => new Date(b.Date) - new Date(a.Date)).slice(0, 5);
+        const recentTrxData = [...db.Transactions].sort((a, b) => {
+            const dateDiff = new Date(b.Date) - new Date(a.Date);
+            if (dateDiff !== 0) return dateDiff;
+            return (b.ID || '').toString().localeCompare((a.ID || '').toString());
+        }).slice(0, 5);
 
         renderDashboard({
             status: 'success',
